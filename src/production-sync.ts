@@ -54,6 +54,21 @@ type ProductionSyncHooks = {
   abandonSimulation: () => void;
 };
 
+/** Read-only view of the V5.2 source of truth for the spatial XR panel. */
+export type SpatialProductionSnapshot = {
+  online: boolean;
+  busy: boolean;
+  message: string;
+  draftCount: number;
+  selectedOrderId: number | null;
+  selected: { id: number; name: string; quantity: number } | null;
+  session: {
+    id: number; name: string; quantity: number; completed: number;
+    phase: 'simulating' | 'ready' | 'posting' | 'posted';
+  } | null;
+  materials: Array<{ name: string; stock: number; unit: string }>;
+};
+
 export class ProductionSyncPanel {
   private root: HTMLDetailsElement | null = null;
   private orders: ProductionOrder[] = [];
@@ -67,6 +82,52 @@ export class ProductionSyncPanel {
   private message = 'Connect to the local production API on port 8001.';
 
   constructor(private readonly hooks: ProductionSyncHooks) {}
+
+  // No new API requests here: always read the current V5.2 state.
+  getSpatialSnapshot(): SpatialProductionSnapshot {
+    const drafts = this.orders.filter(o => o.status === 'draft');
+    const selected = drafts.find(o => o.id === this.selectedOrderId);
+    const nameOf = (productId: number): string =>
+      this.products.find(p => p.id === productId)?.name ?? 'Unknown product';
+    const currentSession = this.session;
+    const session = currentSession && currentSession.phase !== 'posted' ? currentSession : null;
+    return {
+      online: this.online,
+      busy: this.busy,
+      message: this.message,
+      draftCount: drafts.length,
+      selectedOrderId: selected?.id ?? null,
+      selected: selected
+        ? { id: selected.id, name: nameOf(selected.product_id), quantity: selected.quantity }
+        : null,
+      session: session ? {
+        id: session.order.id,
+        name: nameOf(session.order.product_id),
+        quantity: session.order.quantity,
+        completed: session.completed,
+        phase: session.phase,
+      } : null,
+      materials: this.materials.map(m => ({ name: m.name, stock: m.stock, unit: m.unit })),
+    };
+  }
+
+  /** These public XR actions reuse existing validation and posting logic. */
+  refreshForXR(): Promise<void> { return this.refresh(); }
+  startForXR(): Promise<void> { return this.start(); }
+  confirmForXR(): Promise<void> { return this.post(); }
+
+  selectNextDraftForXR(): void {
+    if (this.busy || this.hasActiveOrder()) return;
+    const drafts = this.orders.filter(o => o.status === 'draft');
+    if (!drafts.length) {
+      this.message = 'No draft production orders available.';
+      this.render();
+      return;
+    }
+    const index = drafts.findIndex(o => o.id === this.selectedOrderId);
+    this.selectedOrderId = drafts[(index + 1) % drafts.length].id;
+    this.render();
+  }
 
   hasActiveOrder(): boolean {
     return this.session !== null &&

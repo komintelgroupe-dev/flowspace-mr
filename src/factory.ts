@@ -20,6 +20,7 @@ import { FactoryLayoutPresetsPanel } from './layout-presets.js';
 import { FactoryPlacementController } from './factory-placement.js';
 import { SpatialFactoryMenu } from './spatial-factory-menu.js';
 import { ProductionSyncPanel } from './production-sync.js';
+import { SpatialProductionDashboard } from './spatial-production-dashboard.js';
 import type { FactoryLayoutSnapshot } from './smart-factory-layout.js';
 import type { World } from '@iwsdk/core';
 
@@ -98,13 +99,15 @@ export class FactorySystem extends createSystem({
   private factoryPlacement: FactoryPlacementController | null = null;
   private spatialMenu: SpatialFactoryMenu | null = null;
   private productionSync: ProductionSyncPanel | null = null;
+  private spatialProduction: SpatialProductionDashboard | null = null;
   // Block new machine selections/grabs while a spatial menu button owns input.
   private menuInputBlockUntil = 0;
   private readonly menuRejectedGrabs = new Set<number>();
 
   private spatialMenuHasPriority(): boolean {
     return performance.now() < this.menuInputBlockUntil ||
-      this.spatialMenu?.isHoveringButton() === true;
+      this.spatialMenu?.isHoveringButton() === true ||
+      this.spatialProduction?.isHoveringButton() === true;
   }
   private parkedEnabled = [true, true, true];
   private layoutMode = false;
@@ -228,6 +231,10 @@ export class FactorySystem extends createSystem({
         this.menuInputBlockUntil = performance.now() + 250;
         return;
       }
+      if (this.spatialProduction?.handlePressed(entity.index)) {
+        this.menuInputBlockUntil = performance.now() + 350;
+        return;
+      }
       // Ignore coincident machine presses while a spatial menu control is targeted.
       if (this.spatialMenuHasPriority()) return;
       const stationIndex = this.machineEntityIndices.get(entity.index);
@@ -304,6 +311,17 @@ export class FactorySystem extends createSystem({
         return { ok: true, message: 'Original factory layout restored' };
       },
     });
+    // V5.3: Spatial panel delegates to the SAME V5.2 validated workflow.
+    const v52 = this.productionSync;
+    if (v52) {
+      this.spatialProduction = new SpatialProductionDashboard(this.world, {
+        snapshot: () => v52.getSpatialSnapshot(),
+        refresh: () => { void v52.refreshForXR(); },
+        selectNext: () => v52.selectNextDraftForXR(),
+        start: () => { void v52.startForXR(); },
+        confirm: () => { void v52.confirmForXR(); },
+      });
+    }
     this.setupDesktopSelection();
     this.refreshDashboard();
   }
@@ -1295,6 +1313,9 @@ export class FactorySystem extends createSystem({
 
     if (this.dashboardClock >= 0.2) {
       this.dashboardClock = 0;
+      this.spatialProduction?.sync(this.stations.map(s =>
+        !s.enabled ? 'OFF' : s.blocked ? 'BLOCKED' : s.busy ? 'PROCESSING' : 'WAITING'
+      ));
 
       if (!this.uiPointerHeld) {
         this.refreshDashboard();
@@ -1304,6 +1325,8 @@ export class FactorySystem extends createSystem({
   }
 
   destroy(): void {
+    this.spatialProduction?.dispose();
+    this.spatialProduction = null;
     this.productionSync?.dispose();
     this.productionSync = null;
     this.menuRejectedGrabs.clear();
