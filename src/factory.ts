@@ -21,6 +21,7 @@ import { FactoryPlacementController } from './factory-placement.js';
 import { SpatialFactoryMenu } from './spatial-factory-menu.js';
 import { ProductionSyncPanel } from './production-sync.js';
 import { SpatialProductionDashboard } from './spatial-production-dashboard.js';
+import { IndustrialMixingVisual } from './industrial-mixing-v6.js';
 import type { FactoryLayoutSnapshot } from './smart-factory-layout.js';
 import type { World } from '@iwsdk/core';
 
@@ -100,6 +101,7 @@ export class FactorySystem extends createSystem({
   private spatialMenu: SpatialFactoryMenu | null = null;
   private productionSync: ProductionSyncPanel | null = null;
   private spatialProduction: SpatialProductionDashboard | null = null;
+  private mixingVisual: IndustrialMixingVisual | null = null;
   // Block new machine selections/grabs while a spatial menu button owns input.
   private menuInputBlockUntil = 0;
   private readonly menuRejectedGrabs = new Set<number>();
@@ -183,6 +185,16 @@ export class FactorySystem extends createSystem({
       this.refreshDashboard();
     });
     this.makeFactoryScene();
+    // V6.1: visual-only model attached to the existing Mixing grab root.
+    this.mixingVisual = new IndustrialMixingVisual(
+      this.machineBodies[0],
+      [
+        this.stations[0].progressBar,
+        this.stations[0].workpiece,
+        this.mixerIndicator,
+        this.signalLamps[0],
+      ].filter((value): value is Mesh => value !== null && value !== undefined),
+    );
     this.placementGuard = createFactoryPlacementGuard(this.machineBodies);
     this.xrInfo = createXRMachineInfo(this.world);
     this.smartLayout = new SmartFactoryLayout(this.world, this.machineBodies);
@@ -910,8 +922,8 @@ export class FactorySystem extends createSystem({
       if (!button || !panel.contains(button)) return;
       const action = button.dataset.flow;
       if (this.productionSync?.hasActiveOrder() &&
-          (action === 'reset' || action === 'restock' ||
-           (action === 'toggle' && this.productionSync.isAwaitingPost()))) {
+        (action === 'reset' || action === 'restock' ||
+          (action === 'toggle' && this.productionSync.isAwaitingPost()))) {
         this.setLayoutMessage('Finish or abandon the linked order first.');
         return;
       }
@@ -1135,7 +1147,10 @@ export class FactorySystem extends createSystem({
 
   private setLayoutMessage(message: string): void {
     const status = this.layoutToolbar?.querySelector('#flowspace-layout-status');
-    if (status) { status.textContent = message; status.title = message; }
+    if (status) {
+      status.textContent = message;
+      status.setAttribute('title', message);
+    }
   }
 
   private setLayoutMode(enabled: boolean): void {
@@ -1303,6 +1318,7 @@ export class FactorySystem extends createSystem({
     this.productionSync?.onProgress(this.completedProducts);
     this.refreshScene(this.running ? safeDelta : 0);
     this.animateFactoryDetails(this.running ? safeDelta : 0);
+    this.mixingVisual?.update(this.running && this.stations[0].enabled && !this.stations[0].blocked, safeDelta);
 
     this.spatialMenu?.setState({
       layoutMode: this.layoutMode,
@@ -1325,6 +1341,8 @@ export class FactorySystem extends createSystem({
   }
 
   destroy(): void {
+    this.mixingVisual?.dispose();
+    this.mixingVisual = null;
     this.spatialProduction?.dispose();
     this.spatialProduction = null;
     this.productionSync?.dispose();
